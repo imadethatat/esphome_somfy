@@ -38,6 +38,8 @@ CONF_INITIAL_ROLLING_CODE = "initial_rolling_code"
 # RTS-specific
 CONF_ALLOWED_REMOTES = "allowed_remotes"
 CONF_DETECTED_REMOTE = "detected_remote"
+CONF_TILT_STEPS = "tilt_steps"
+CONF_TILT_INVERTED = "tilt_inverted"
 
 # iohc-specific
 CONF_ENCRYPTION_KEY = "encryption_key"
@@ -127,6 +129,12 @@ def validate_rts_config(config, hub_config=None):
     )
 
 
+def validate_rts_tilt_config(config):
+    if config.get(CONF_TILT_INVERTED) and CONF_TILT_STEPS not in config:
+        raise cv.Invalid(f"'{CONF_TILT_INVERTED}' requires '{CONF_TILT_STEPS}'")
+    return config
+
+
 def find_hub_config(full_config, hub_id):
     """Return the somfy hub config with the given id, or None if absent."""
     hubs = full_config.get(DOMAIN) or []
@@ -156,7 +164,7 @@ COMMON_COVER_FIELDS = {
     ),
 }
 
-RTS_COVER_SCHEMA = (
+RTS_COVER_SCHEMA = cv.All(
     cover.cover_schema(SomfyCover)
     .extend(
         {
@@ -165,10 +173,13 @@ RTS_COVER_SCHEMA = (
                 cv.hex_uint32_t
             ),
             cv.Optional(CONF_DETECTED_REMOTE): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_TILT_STEPS): cv.int_range(min=1, max=127),
+            cv.Optional(CONF_TILT_INVERTED, default=False): cv.boolean,
         }
     )
     .extend(COMMON_COVER_FIELDS)
-    .extend(cv.COMPONENT_SCHEMA)
+    .extend(cv.COMPONENT_SCHEMA),
+    validate_rts_tilt_config,
 )
 
 IOHC_COVER_SCHEMA = cv.All(
@@ -286,6 +297,9 @@ async def _to_code_rts(config):
     cg.add(var.set_storage_namespace(config[CONF_SOMFY_STORAGE_NAMESPACE]))
     cg.add(var.set_initial_rolling_code(config[CONF_INITIAL_ROLLING_CODE]))
     cg.add(var.set_repeat_count(config[CONF_REPEAT_COMMAND_COUNT]))
+    if CONF_TILT_STEPS in config:
+        cg.add(var.set_tilt_steps(config[CONF_TILT_STEPS]))
+        cg.add(var.set_tilt_inverted(config[CONF_TILT_INVERTED]))
 
     if CONF_ALLOWED_REMOTES in config:
         for code in config[CONF_ALLOWED_REMOTES]:

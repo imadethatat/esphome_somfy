@@ -126,6 +126,42 @@ The ESPHome device acts like a new Somfy RTS remote identified by `remote_code`.
 3. Read the decoded `0x......` ID from the text sensor.
 4. Add it to `allowed_remotes` and recompile.
 
+### Venetian blind tilt (80-bit RTS)
+
+Set `tilt_steps` to the number of Telis Mod/Var wheel detents between the two
+useful slat endpoints. This enables the native ESPHome/Home Assistant tilt
+control while leaving the cover position as the blind height:
+
+```yaml
+cover:
+  - platform: somfy
+    type: rts
+    id: livingroom_blind
+    name: "Living Room Blind"
+    device_class: blind
+    open_duration: 72s
+    close_duration: 72s
+    storage_key: KeyLivingBlind
+    remote_code: 0xA1B2C3
+    prog_button: program_livingroom_blind
+    somfy_id: rts_radio
+    tilt_steps: 10
+    tilt_inverted: false
+    allowed_remotes:
+      - 0x112233
+      - 0x445566
+```
+
+The component sends and receives the Telis 80-bit step frames. A physical
+wheel event adjusts only the tilt estimate and is never treated as an UP/DOWN
+lift command. If the Home Assistant percentage runs opposite to the slat
+movement, set `tilt_inverted: true`. Calibrate `tilt_steps` by counting detents
+from one useful slat endpoint to the other.
+
+For the complete wiring/configuration example, calibration procedure,
+hardware-verified frame layout, and troubleshooting guide, see
+[RTS Venetian tilt](docs/rts-venetian-tilt.md).
+
 </details>
 
 ---

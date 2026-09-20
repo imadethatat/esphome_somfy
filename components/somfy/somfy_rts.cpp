@@ -8,6 +8,8 @@
 #include "esphome/core/hal.h"
 #endif
 #include <cinttypes>
+#include <cmath>
+#include <cstdlib>
 
 namespace esphome {
 namespace somfy {
@@ -47,6 +49,11 @@ void SomfyCover::on_rts_frame_(const RtsDecodedFrame &frame) {
     case RtsCommand::My:
     case RtsCommand::UpDown:
       this->stop_rx_sync_();
+      break;
+
+    case RtsCommand::StepUp:
+    case RtsCommand::StepDown:
+      this->apply_rx_tilt_(frame.command, frame.step_size);
       break;
 
     default:
@@ -134,11 +141,17 @@ void SomfyCover::loop() {
   SomfyTimeBasedCover::loop();
 }
 
-void SomfyCover::dump_config() { ESP_LOGCONFIG(TAG, "Somfy RTS cover"); }
+void SomfyCover::dump_config() {
+  ESP_LOGCONFIG(TAG, "Somfy RTS cover");
+  if (this->tilt_steps_ > 0) {
+    ESP_LOGCONFIG(TAG, "  Venetian tilt: %u steps, protocol direction %s",
+                  this->tilt_steps_, this->tilt_inverted_ ? "inverted" : "normal");
+  }
+}
 
 cover::CoverTraits SomfyCover::get_traits() {
   auto traits = SomfyTimeBasedCover::get_traits();
-  traits.set_supports_tilt(false);
+  traits.set_supports_tilt(this->tilt_steps_ > 0);
   return traits;
 }
 
@@ -152,6 +165,10 @@ void SomfyCover::control(const cover::CoverCall &call) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
   }
 #endif
+
+  const auto requested_tilt = call.get_tilt();
+  if (requested_tilt.has_value() && this->tilt_steps_ > 0)
+    this->set_tilt_target_(*requested_tilt);
 
   SomfyTimeBasedCover::control(call);
 }
@@ -175,7 +192,7 @@ void SomfyCover::program() { log_and_send_("PROG", RtsCommand::Prog);  }
 void SomfyCover::build_frame(std::array<uint8_t, 7> &bytes, RtsCommand command, uint16_t code) {
   bytes.fill(0x00);
 
-  const uint8_t button = static_cast<uint8_t>(command);
+  const uint8_t button = static_cast<uint16_t>(command) & 0x0F;
   bytes[0] = 0xA7;
   bytes[1] = button << 4;
   bytes[2] = code >> 8;
@@ -198,15 +215,102 @@ void SomfyCover::build_frame(std::array<uint8_t, 7> &bytes, RtsCommand command, 
   }
 }
 
+void SomfyCover::build_step_frame(std::array<uint8_t, 10> &bytes, RtsCommand command, uint8_t steps,
+                                  uint16_t code) {
+  std::array<uint8_t, 7> short_frame;
+  this->build_frame(short_frame, RtsCommand::StepDown, code);
+  std::copy(short_frame.begin(), short_frame.end(), bytes.begin());
+
+  steps = clamp<uint8_t>(steps, 1, 0x7F);
+  bytes[7] = 0x84;
+  bytes[8] = static_cast<uint8_t>(0x30 | ((steps & 0x70) >> 4));
+  if (command == RtsCommand::StepUp)
+    bytes[8] |= 0x08;
+  bytes[9] = static_cast<uint8_t>((steps & 0x0F) << 4);
+  bytes[9] |= static_cast<uint8_t>((bytes[7] >> 4) ^ (bytes[8] >> 4) ^ (bytes[9] >> 4) ^
+                                   (bytes[7] & 0x0F) ^ (bytes[8] & 0x0F));
+}
+
+void SomfyCover::build_long_frame_(std::array<uint8_t, 10> &bytes, RtsCommand command, uint16_t code) {
+  std::array<uint8_t, 7> short_frame;
+  this->build_frame(short_frame, command, code);
+  std::copy(short_frame.begin(), short_frame.end(), bytes.begin());
+
+  bytes[7] = 0xC4;
+  if (command == RtsCommand::Up) {
+    bytes[8] = 0x20;
+    bytes[9] = 0x00;
+  } else if (command == RtsCommand::Down) {
+    bytes[8] = 0x2C;
+    bytes[9] = 0x80;
+  } else {
+    bytes[8] = 0x00;
+    bytes[9] = 0x10;
+  }
+  bytes[9] |= static_cast<uint8_t>((bytes[7] >> 4) ^ (bytes[8] >> 4) ^ (bytes[9] >> 4) ^
+                                   (bytes[7] & 0x0F) ^ (bytes[8] & 0x0F));
+}
+
 void SomfyCover::send_command(RtsCommand command) {
   const uint16_t rolling_code = this->storage_->nextCode();
   if (rolling_code == 0) {
     ESP_LOGE(TAG, "TX aborted: rolling-code storage unavailable or exhausted");
     return;
   }
-  std::array<uint8_t, 7> frame;
-  build_frame(frame, command, rolling_code);
+  if (this->tilt_steps_ > 0) {
+    std::array<uint8_t, 10> frame;
+    this->build_long_frame_(frame, command, rolling_code);
+    ESP_LOGD(TAG, "80-bit lift TX: command=0x%X rolling=0x%04" PRIX16,
+             static_cast<unsigned>(command), rolling_code);
+    this->hub_->send_frame(frame, static_cast<uint8_t>(this->repeat_count_), true);
+  } else {
+    std::array<uint8_t, 7> frame;
+    build_frame(frame, command, rolling_code);
+    this->hub_->send_frame(frame, static_cast<uint8_t>(this->repeat_count_));
+  }
+}
+
+void SomfyCover::send_step_command_(RtsCommand command, uint8_t steps) {
+  const uint16_t rolling_code = this->storage_->nextCode();
+  if (rolling_code == 0) {
+    ESP_LOGE(TAG, "Tilt TX aborted: rolling-code storage unavailable or exhausted");
+    return;
+  }
+  std::array<uint8_t, 10> frame;
+  this->build_step_frame(frame, command, steps, rolling_code);
+  ESP_LOGD(TAG, "Tilt TX: %s, %u step(s), rolling=0x%04" PRIX16,
+           command == RtsCommand::StepUp ? "STEP_UP" : "STEP_DOWN", steps, rolling_code);
   this->hub_->send_frame(frame, static_cast<uint8_t>(this->repeat_count_));
+}
+
+void SomfyCover::set_tilt_target_(float target) {
+  target = clamp(target, 0.0f, 1.0f);
+  const int current_step = static_cast<int>(std::lround(this->tilt * this->tilt_steps_));
+  const int target_step = static_cast<int>(std::lround(target * this->tilt_steps_));
+  const int delta = target_step - current_step;
+  if (delta == 0) {
+    this->tilt = target_step / static_cast<float>(this->tilt_steps_);
+    this->publish_state();
+    return;
+  }
+
+  const bool logical_up = delta > 0;
+  const bool protocol_up = logical_up != this->tilt_inverted_;
+  this->send_step_command_(protocol_up ? RtsCommand::StepUp : RtsCommand::StepDown,
+                           static_cast<uint8_t>(std::abs(delta)));
+  this->tilt = target_step / static_cast<float>(this->tilt_steps_);
+  this->publish_state();
+}
+
+void SomfyCover::apply_rx_tilt_(RtsCommand command, uint8_t steps) {
+  if (this->tilt_steps_ == 0)
+    return;
+  steps = std::max<uint8_t>(steps, 1);
+  const int direction = ((command == RtsCommand::StepUp) != this->tilt_inverted_) ? 1 : -1;
+  this->tilt = clamp(this->tilt + direction * steps / static_cast<float>(this->tilt_steps_), 0.0f, 1.0f);
+  ESP_LOGD(TAG, "RX tilt: %s, %u step(s) -> %.0f%%",
+           command == RtsCommand::StepUp ? "STEP_UP" : "STEP_DOWN", steps, this->tilt * 100.0f);
+  this->publish_state();
 }
 
 } // namespace somfy

@@ -64,6 +64,8 @@ public:
   void set_storage_key(const char *key) { this->storage_key_ = key; }
   void set_initial_rolling_code(uint16_t code) { this->initial_rolling_code_ = code; }
   void set_repeat_count(int count) { this->repeat_count_ = count; }
+  void set_tilt_steps(uint8_t steps) { this->tilt_steps_ = steps; }
+  void set_tilt_inverted(bool inverted) { this->tilt_inverted_ = inverted; }
 
   cover::CoverTraits get_traits() override;
 
@@ -80,6 +82,8 @@ protected:
   const char *storage_key_{nullptr};
   uint16_t initial_rolling_code_{1};
   int repeat_count_{4};
+  uint8_t tilt_steps_{0};
+  bool tilt_inverted_{false};
 
   // Rolling code storage
   std::unique_ptr<NVSRollingCodeStorage> storage_;
@@ -102,7 +106,12 @@ protected:
   // TX
   void log_and_send_(const char *label, RtsCommand cmd);
   void build_frame(std::array<uint8_t, 7> &bytes, RtsCommand command, uint16_t code);
+  void build_step_frame(std::array<uint8_t, 10> &bytes, RtsCommand command, uint8_t steps, uint16_t code);
+  void build_long_frame_(std::array<uint8_t, 10> &bytes, RtsCommand command, uint16_t code);
   void send_command(RtsCommand command);
+  void send_step_command_(RtsCommand command, uint8_t steps);
+  void set_tilt_target_(float target);
+  void apply_rx_tilt_(RtsCommand command, uint8_t steps);
   void open();
   void close();
   void stop();

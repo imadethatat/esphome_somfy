@@ -83,8 +83,8 @@ static void build_sync(remote_base::RawTimings &t, uint8_t sync_count) {
   push_low(t, RtsTiming::SYMBOL_USEC);
 }
 
-static void build_data(remote_base::RawTimings &t, const std::array<uint8_t, 7> &bytes) {
-  for (uint8_t i = 0; i < RtsFrame::SHORT_FRAME_BITS; i++) {
+template<size_t N> static void build_data(remote_base::RawTimings &t, const std::array<uint8_t, N> &bytes) {
+  for (uint8_t i = 0; i < N * 8; i++) {
     if ((bytes[i / 8] >> (7 - (i % 8))) & 1) {
       push_low(t, RtsTiming::SYMBOL_USEC);
       push_high(t, RtsTiming::SYMBOL_USEC);
@@ -97,6 +97,41 @@ static void build_data(remote_base::RawTimings &t, const std::array<uint8_t, 7> 
 
 static void build_gap(remote_base::RawTimings &t) {
   push_low(t, RtsTiming::INTER_FRAME_GAP_USEC);
+}
+
+static uint8_t checksum80(uint8_t byte7, uint8_t byte8, uint8_t byte9) {
+  return static_cast<uint8_t>(((byte7 >> 4) ^ (byte8 >> 4) ^ (byte9 >> 4) ^
+                               (byte7 & 0x0F) ^ (byte8 & 0x0F)) & 0x0F);
+}
+
+void SomfyRtsHub::send_frame(const std::array<uint8_t, 10> &frame_bytes, uint8_t repeat_count,
+                             bool update_repeat_extension) {
+  remote_base::RawTimings tx;
+  remote_base::RawTimings data;
+  build_sync(tx, 12);
+  build_data(data, frame_bytes);
+  tx.insert(tx.end(), data.begin(), data.end());
+  build_gap(tx);
+
+  for (uint8_t i = 0; i < repeat_count; i++) {
+    auto repeat_frame = frame_bytes;
+    if (update_repeat_extension) {
+      // Standard 80-bit frames encode the repeat ordinal in byte 7. Step
+      // frames use the constant 0x84 extension and leave this disabled.
+      repeat_frame[7] = static_cast<uint8_t>(0xC4 + (((i + 1) % 15) * 4));
+      repeat_frame[9] = static_cast<uint8_t>((repeat_frame[9] & 0xF0) |
+                                             checksum80(repeat_frame[7], repeat_frame[8], repeat_frame[9]));
+      data.clear();
+      build_data(data, repeat_frame);
+    }
+    build_sync(tx, 6);
+    tx.insert(tx.end(), data.begin(), data.end());
+    build_gap(tx);
+  }
+
+  auto call = this->remote_transmitter_->transmit();
+  call.get_data()->set_data(tx);
+  call.perform();
 }
 
 void SomfyRtsHub::send_frame(const std::array<uint8_t, 7> &frame_bytes, uint8_t repeat_count) {
@@ -160,6 +195,8 @@ const char *rts_command_name(RtsCommand cmd) {
     case RtsCommand::Prog:    return "PROG";
     case RtsCommand::SunFlag: return "SUN_FLAG";
     case RtsCommand::Flag:    return "FLAG";
+    case RtsCommand::StepUp:  return "STEP_UP";
+    case RtsCommand::StepDown:return "STEP_DOWN";
     default:                  return "UNKNOWN";
   }
 }
@@ -323,16 +360,42 @@ bool SomfyRtsHub::decode_frame_(const remote_base::RawTimings &data, RtsDecodedF
               }
             }
 
-            decoded_frame.command = static_cast<RtsCommand>(frame.bytes[1] >> 4);
+            const uint8_t command_base = frame.bytes[1] >> 4;
+            decoded_frame.command = static_cast<RtsCommand>(command_base);
             decoded_frame.rolling_code = (static_cast<uint16_t>(frame.bytes[2]) << 8) | frame.bytes[3];
             decoded_frame.remote_code = (static_cast<uint32_t>(frame.bytes[4]) << 16) |
                                         (static_cast<uint32_t>(frame.bytes[5]) << 8) | frame.bytes[6];
+            decoded_frame.bit_length = bit_length;
+            decoded_frame.step_size = 0;
+            if (bit_length == RtsFrame::LONG_FRAME_BITS && command_base == 0x0B) {
+              decoded_frame.command = (frame.bytes[8] & 0x08) != 0 ? RtsCommand::StepUp : RtsCommand::StepDown;
+              decoded_frame.step_size = static_cast<uint8_t>(((frame.bytes[8] & 0x07) << 4) |
+                                                             ((frame.bytes[9] & 0xF0) >> 4));
+            }
 
             if (debug_log) {
+              if (bit_length == RtsFrame::LONG_FRAME_BITS) {
+                // Bytes 0..6 use the normal RTS XOR-chain obfuscation.  The
+                // 80-bit extension (bytes 7..9) is transmitted as-is, so log
+                // both views while reverse-engineering commands carried by it.
+                ESP_LOGD(TAG,
+                         "RTS80 air: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                         payload.bytes[0], payload.bytes[1], payload.bytes[2], payload.bytes[3], payload.bytes[4],
+                         payload.bytes[5], payload.bytes[6], payload.bytes[7], payload.bytes[8], payload.bytes[9]);
+                ESP_LOGD(TAG,
+                         "RTS80 decoded: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+                         frame.bytes[0], frame.bytes[1], frame.bytes[2], frame.bytes[3], frame.bytes[4],
+                         frame.bytes[5], frame.bytes[6], frame.bytes[7], frame.bytes[8], frame.bytes[9]);
+                ESP_LOGD(TAG,
+                         "RTS80 fields: remote=0x%06" PRIX32 " rolling=0x%04" PRIX16
+                         " command_base=0x%02X extension=%02X %02X %02X byte8_bit3=%u",
+                         decoded_frame.remote_code, decoded_frame.rolling_code, frame.bytes[1] >> 4, frame.bytes[7],
+                         frame.bytes[8], frame.bytes[9], (frame.bytes[8] >> 3) & 0x01);
+              }
               ESP_LOGD(TAG,
                        "decode_frame_ RETURN OK: remote=0x%06" PRIX32 " cmd=0x%X rolling=0x%04" PRIX16
                        " hw_sync=%u bit_length=%u",
-                       decoded_frame.remote_code, (frame.bytes[1] >> 4), decoded_frame.rolling_code, last_sync_hw,
+                       decoded_frame.remote_code, command_base, decoded_frame.rolling_code, last_sync_hw,
                        bit_length);
             }
 

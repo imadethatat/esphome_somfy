@@ -140,7 +140,7 @@ struct Rig {
   TestCover cover;
 
   /// @param with_receiver false models a TX-only hub (RX is optional for RTS).
-  explicit Rig(bool with_receiver = true) {
+  explicit Rig(bool with_receiver = true, uint8_t tilt_steps = 0) {
     g_millis = 1000;
     g_rolling_code = 1;
 
@@ -155,6 +155,7 @@ struct Rig {
     this->cover.set_storage_namespace("somfy");
     this->cover.set_storage_key("test");
     this->cover.set_repeat_count(2);
+    this->cover.set_tilt_steps(tilt_steps);
     this->cover.set_open_duration(TRAVEL_MS);
     this->cover.set_close_duration(TRAVEL_MS);
     this->cover.set_log_text_sensor(&this->detected);
@@ -165,6 +166,13 @@ struct Rig {
   /// Deliver a frame as if the hub had just decoded it off the air.
   void receive(uint32_t remote_code, somfy::RtsCommand command) {
     this->cover.on_rts_frame_(make_frame(remote_code, command));
+  }
+
+  void receive(uint32_t remote_code, somfy::RtsCommand command, uint8_t steps) {
+    auto frame = make_frame(remote_code, command);
+    frame.bit_length = 80;
+    frame.step_size = steps;
+    this->cover.on_rts_frame_(frame);
   }
 
   /// Advance the simulated clock, running the cover's loop at ~50 Hz.
@@ -333,6 +341,126 @@ static void test_traits() {
   check(traits.get_is_assumed_state(), "assumed state is advertised");
 }
 
+static std::array<uint8_t, 10> make_80_bit_frame(somfy::RtsCommand command, uint16_t rolling,
+                                                 uint8_t step_size = 1) {
+  std::array<uint8_t, 10> frame{};
+  const uint8_t base = static_cast<uint16_t>(command) & 0x0F;
+  frame[0] = 0xB3;
+  frame[1] = base << 4;
+  frame[2] = rolling >> 8;
+  frame[3] = rolling;
+  frame[4] = static_cast<uint8_t>(REMOTE_CODE >> 16);
+  frame[5] = static_cast<uint8_t>(REMOTE_CODE >> 8);
+  frame[6] = static_cast<uint8_t>(REMOTE_CODE);
+
+  uint8_t checksum = 0;
+  for (uint8_t i = 0; i < 7; i++)
+    checksum ^= frame[i] ^ (frame[i] >> 4);
+  frame[1] |= checksum & 0x0F;
+
+  if (base == 0x0B) {
+    frame[7] = 0x84;
+    frame[8] = static_cast<uint8_t>(0x30 | ((step_size & 0x70) >> 4));
+    if (command == somfy::RtsCommand::StepUp)
+      frame[8] |= 0x08;
+    frame[9] = static_cast<uint8_t>((step_size & 0x0F) << 4);
+  } else if (command == somfy::RtsCommand::Up) {
+    frame[7] = 0xC4;
+    frame[8] = 0x20;
+  } else if (command == somfy::RtsCommand::Down) {
+    frame[7] = 0xC4;
+    frame[8] = 0x2C;
+    frame[9] = 0x80;
+  } else {
+    frame[7] = 0xC4;
+    frame[9] = 0x10;
+  }
+  frame[9] |= static_cast<uint8_t>((frame[7] >> 4) ^ (frame[8] >> 4) ^ (frame[9] >> 4) ^
+                                   (frame[7] & 0x0F) ^ (frame[8] & 0x0F));
+
+  for (uint8_t i = 1; i < 7; i++)
+    frame[i] ^= frame[i - 1];
+  return frame;
+}
+
+static void test_80_bit_decode_and_tilt() {
+  printf("80-bit RX commands and Venetian tilt\n");
+  Rig rig(true, 10);
+  rig.cover.tilt = 0.5f;
+
+  struct Vector { somfy::RtsCommand command; const char *name; } vectors[] = {
+      {somfy::RtsCommand::Up, "UP"}, {somfy::RtsCommand::Down, "DOWN"}, {somfy::RtsCommand::My, "MY"}};
+  uint16_t rolling = 0x100;
+  for (const auto &vector : vectors) {
+    rig.hub.send_frame(make_80_bit_frame(vector.command, rolling++), 0);
+    rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
+    check(rig.detected.last_state.find(vector.name) != std::string::npos, "80-bit standard command decodes");
+  }
+
+  rig.hub.send_frame(make_80_bit_frame(somfy::RtsCommand::StepUp, rolling++, 1), 0);
+  rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
+  check(rig.detected.last_state.find("STEP_UP") != std::string::npos, "80-bit STEP_UP decodes");
+  check_close(rig.cover.tilt, 0.6f, 0.001f, "STEP_UP changes tilt but not lift position");
+
+  rig.hub.send_frame(make_80_bit_frame(somfy::RtsCommand::StepDown, rolling++, 1), 0);
+  rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
+  check(rig.detected.last_state.find("STEP_DOWN") != std::string::npos, "80-bit STEP_DOWN decodes");
+  check_close(rig.cover.tilt, 0.5f, 0.001f, "STEP_DOWN restores tilt estimate");
+  check(!rig.cover.rx_active(), "step commands never start lift animation");
+}
+
+static void test_captured_telis_mod_var_frames() {
+  printf("Captured Telis 4 Mod/Var vectors\n");
+  Rig rig(true, 10);
+  // The remote address in these captured vectors was replaced with 0x112233;
+  // command, rolling-code, and extension bytes retain the observed values.
+  const std::array<uint8_t, 10> wheel_up_air{{0xB3, 0x05, 0x06, 0xFF, 0xEE, 0xCC, 0xFF, 0x84, 0x30, 0x1E}};
+  const std::array<uint8_t, 10> wheel_down_air{{0xB4, 0x06, 0x05, 0xFF, 0xEE, 0xCC, 0xFF, 0x84, 0x38, 0x16}};
+
+  rig.hub.send_frame(wheel_up_air, 0);
+  rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
+  check(rig.detected.last_state.find("112233 STEP_DOWN") != std::string::npos,
+        "captured wheel-up frame is protocol STEP_DOWN");
+
+  rig.hub.send_frame(wheel_down_air, 0);
+  rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
+  check(rig.detected.last_state.find("112233 STEP_UP") != std::string::npos,
+        "captured wheel-down frame is protocol STEP_UP");
+}
+
+static void test_ha_tilt_control() {
+  printf("Home Assistant tilt control\n");
+  Rig rig(true, 10);
+  rig.cover.tilt = 0.2f;
+  const uint16_t rolling_before = g_rolling_code;
+  cover::CoverCall call;
+  call.set_tilt(0.7f);
+  rig.cover.control(call);
+  check(rig.tx.transmit_count == 1, "one 80-bit frame is sent for a multi-step tilt target");
+  check(g_rolling_code == rolling_before + 1, "one rolling code is consumed per tilt target");
+  check_close(rig.cover.tilt, 0.7f, 0.001f, "tilt estimate reaches the quantized HA target");
+  rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
+  check(rig.detected.last_state.find("STEP_UP") != std::string::npos, "HA tilt TX round-trips as STEP_UP");
+}
+
+static void test_venetian_lift_uses_80_bit_frames() {
+  printf("Venetian lift TX framing\n");
+  Rig roller;
+  roller.cover.open();
+  const size_t short_size = roller.tx.last_data.get_data().size();
+
+  Rig blind(true, 12);
+  struct Action { void (TestCover::*send)(); const char *name; } actions[] = {
+      {&TestCover::open, "UP"}, {&TestCover::close, "DOWN"}, {&TestCover::stop, "MY"}};
+  for (const auto &action : actions) {
+    (blind.cover.*action.send)();
+    check(blind.tx.last_data.get_data().size() > short_size, "Venetian standard command uses longer 80-bit TX");
+    blind.hub.on_receive(remote_base::RemoteReceiveData(as_received(blind.tx.last_data.get_data())));
+    check(blind.detected.last_state.find(action.name) != std::string::npos,
+          "Venetian 80-bit lift command round-trips through decoder");
+  }
+}
+
 /// A press makes the remote send the same frame several times, ~143 ms apart,
 /// and the receiver hands us each copy. Repeats must collapse, but the next
 /// press must be acted on immediately however fast it follows — a time-based
@@ -413,6 +541,14 @@ int main() {
   test_foreign_remote_reported_but_ignored();
   printf("\n");
   test_traits();
+  printf("\n");
+  test_80_bit_decode_and_tilt();
+  printf("\n");
+  test_captured_telis_mod_var_frames();
+  printf("\n");
+  test_ha_tilt_control();
+  printf("\n");
+  test_venetian_lift_uses_80_bit_frames();
   printf("\n");
   test_repeat_burst_collapses_but_new_press_gets_through();
   printf("\n");

@@ -53,9 +53,15 @@ class CoverCall {
   bool get_stop() const { return this->stop_; }
   const optional<bool> &get_toggle() const { return this->toggle_; }
   const optional<float> &get_position() const { return this->position_; }
+  CoverCall &set_tilt(float tilt) {
+    this->tilt_ = tilt;
+    return *this;
+  }
+  const optional<float> &get_tilt() const { return this->tilt_; }
 
  protected:
   optional<float> position_;
+  optional<float> tilt_;
   optional<bool> toggle_;
   bool stop_{false};
 };
@@ -72,6 +78,7 @@ class Cover {
   virtual ~Cover() = default;
 
   float position{0.0f};
+  float tilt{0.0f};
   CoverOperation current_operation{COVER_OPERATION_IDLE};
 
   virtual CoverTraits get_traits() = 0;
@@ -81,6 +88,7 @@ class Cover {
     (void) save;
     this->publish_count++;
     this->last_published_position = this->position;
+    this->last_published_tilt = this->tilt;
     this->last_published_operation = this->current_operation;
   }
 
@@ -89,6 +97,7 @@ class Cover {
   // Test observability
   int publish_count{0};
   float last_published_position{-1.0f};
+  float last_published_tilt{-1.0f};
   CoverOperation last_published_operation{COVER_OPERATION_IDLE};
   /// When set, setup() restores this position instead of defaulting to 0.5.
   optional<CoverRestoreState> restore_value;

@@ -20,7 +20,7 @@ namespace esphome {
 namespace somfy {
 
 // RTS command enum (shared between hub and devices)
-enum class RtsCommand : uint8_t {
+enum class RtsCommand : uint16_t {
   My      = 0x1,
   Up      = 0x2,
   MyUp    = 0x3,
@@ -29,7 +29,9 @@ enum class RtsCommand : uint8_t {
   UpDown  = 0x6,
   Prog    = 0x8,
   SunFlag = 0x9,
-  Flag    = 0xA
+  Flag    = 0xA,
+  StepDown = 0x0B,
+  StepUp   = 0x8B
 };
 
 // Decoded RTS frame (from RX)
@@ -37,6 +39,8 @@ struct RtsDecodedFrame {
   uint32_t remote_code{0};
   uint16_t rolling_code{0};
   RtsCommand command{RtsCommand::My};
+  uint8_t bit_length{56};
+  uint8_t step_size{0};
 };
 
 // TX timing constants
@@ -87,6 +91,8 @@ class SomfyRtsHub : public Component
 
   // TX: encode and transmit an RTS frame
   void send_frame(const std::array<uint8_t, 7> &frame_bytes, uint8_t repeat_count);
+  void send_frame(const std::array<uint8_t, 10> &frame_bytes, uint8_t repeat_count,
+                  bool update_repeat_extension = false);
 
   // RX: register a device to receive decoded frames
   // The callback is called for every successfully decoded frame.
