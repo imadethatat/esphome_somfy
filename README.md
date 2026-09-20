@@ -2,6 +2,14 @@
 
 This repository provides an **external ESPHome component** to control Somfy motorised covers (and future device types). It uses a **hub architecture** where radio hardware is configured once in a `somfy:` hub block, and individual devices reference it via `somfy_id`. This makes it easy to add multiple covers sharing a single radio, and to extend with new platforms (switches, lights, etc.) in the future.
 
+> [!NOTE]
+> **This branch adds hardware-verified Somfy RTS Venetian blind support.**
+> It decodes and transmits Telis Mod/Var 80-bit frames, exposes independent
+> Home Assistant height and slat-tilt controls, follows physical individual and
+> group remotes, and preserves the existing 56-bit roller-cover path. See the
+> [RTS Venetian tilt guide](docs/rts-venetian-tilt.md) for configuration,
+> calibration, captured frame details, and on-device test results.
+
 Two protocols are supported:
 
 | Type | Protocol | Frequency | Modulation | Use case |
