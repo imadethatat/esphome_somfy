@@ -8,7 +8,6 @@ updates which cannot transmit, and a fail-disabled persistent transfer.
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).parent.parent
 MANAGER_CPP = (
     ROOT / "components/somfy_iohc_manager/somfy_iohc_manager.cpp"

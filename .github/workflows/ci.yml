@@ -76,6 +76,7 @@ jobs:
           - test_iohc_manager
           - test_rts_tx_only
           - test_rts_rx
+          - test_rts_venetian
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

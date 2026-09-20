@@ -527,6 +527,8 @@ cover:
 | `encryption_key` | no | Custom AES key hex string (iohc 1W: defaults to transfer key; iohc 2W: system key, required) |
 | `mode` | no | iohc only: `1w` (default) or `2w` |
 | `target_node` | 2W only | 3-byte hex address of target actuator |
+| `tilt_steps` | no, RTS | Enables native Venetian tilt and sets the calibrated detent count (1–127) |
+| `tilt_inverted` | no, RTS | Reverses protocol tilt direction; requires `tilt_steps` |
 
 ## Adding shutters safely
 
@@ -553,6 +555,13 @@ This project builds on prior work:
 - https://github.com/rstrouse/ESPSomfy-RTS (rts rx decoder reference)
 - https://github.com/Velocet/iown-homecontrol (io-homecontrol protocol documentation)
 - https://github.com/rspaargaren/iohomecontrol (io-homecontrol implementation reference)
+
+The RTS Venetian implementation, its tests, and its documentation were
+developed and reviewed with assistance from OpenAI Codex. The maintainer
+directed the work, supplied and interpreted the physical-radio captures, ran
+the hardware verification, and remains responsible for the resulting code.
+AI assistance is stated explicitly here so that contributors and users can
+evaluate the provenance of the changes openly.
 
 ## License
 

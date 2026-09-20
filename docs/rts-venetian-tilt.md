@@ -213,3 +213,12 @@ for 56-bit regression and 80-bit UP/DOWN/MY/STEP_UP/STEP_DOWN, and a statement
 that the virtual remote IDs and rolling-code storage format remain unchanged.
 Do not make 80-bit transmission the default for existing roller covers;
 `tilt_steps` is the explicit opt-in boundary.
+
+## Development provenance
+
+This feature, its regression tests, and this guide were developed and reviewed
+with assistance from OpenAI Codex. The maintainer directed the implementation,
+provided the physical Telis captures, performed the on-device verification,
+and is responsible for the submitted result. This disclosure is intentional:
+AI-assisted work should be reviewable under the same standards as any other
+contribution, with its provenance stated plainly.

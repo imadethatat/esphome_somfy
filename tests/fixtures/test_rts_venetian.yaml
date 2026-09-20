@@ -1,0 +1,49 @@
+# ESPHome compile-test for the native RTS Venetian tilt path.
+esphome:
+  name: test-somfy-rts-venetian
+
+esp32:
+  board: esp32dev
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+
+remote_transmitter:
+  id: transmitter
+  pin: GPIO4
+  carrier_duty_percent: 100%
+
+remote_receiver:
+  id: receiver
+  pin: GPIO5
+
+somfy:
+  - id: rts_hub
+    type: rts
+    remote_transmitter: transmitter
+    remote_receiver: receiver
+
+button:
+  - platform: template
+    id: prog_button
+    name: "Venetian Program"
+
+cover:
+  - platform: somfy
+    type: rts
+    name: "Test RTS Venetian"
+    device_class: blind
+    open_duration: 40s
+    close_duration: 40s
+    storage_key: TestVenetian
+    remote_code: 0x123456
+    prog_button: prog_button
+    somfy_id: rts_hub
+    tilt_steps: 12
+    tilt_inverted: true
+    allowed_remotes:
+      - 0x112233

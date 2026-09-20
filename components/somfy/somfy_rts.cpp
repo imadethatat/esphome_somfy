@@ -270,17 +270,18 @@ void SomfyCover::send_command(RtsCommand command) {
   }
 }
 
-void SomfyCover::send_step_command_(RtsCommand command, uint8_t steps) {
+bool SomfyCover::send_step_command_(RtsCommand command, uint8_t steps) {
   const uint16_t rolling_code = this->storage_->nextCode();
   if (rolling_code == 0) {
     ESP_LOGE(TAG, "Tilt TX aborted: rolling-code storage unavailable or exhausted");
-    return;
+    return false;
   }
   std::array<uint8_t, 10> frame;
   this->build_step_frame(frame, command, steps, rolling_code);
   ESP_LOGD(TAG, "Tilt TX: %s, %u step(s), rolling=0x%04" PRIX16,
            command == RtsCommand::StepUp ? "STEP_UP" : "STEP_DOWN", steps, rolling_code);
   this->hub_->send_frame(frame, static_cast<uint8_t>(this->repeat_count_));
+  return true;
 }
 
 void SomfyCover::set_tilt_target_(float target) {
@@ -296,8 +297,9 @@ void SomfyCover::set_tilt_target_(float target) {
 
   const bool logical_up = delta > 0;
   const bool protocol_up = logical_up != this->tilt_inverted_;
-  this->send_step_command_(protocol_up ? RtsCommand::StepUp : RtsCommand::StepDown,
-                           static_cast<uint8_t>(std::abs(delta)));
+  if (!this->send_step_command_(protocol_up ? RtsCommand::StepUp : RtsCommand::StepDown,
+                                static_cast<uint8_t>(std::abs(delta))))
+    return;
   this->tilt = target_step / static_cast<float>(this->tilt_steps_);
   this->publish_state();
 }
@@ -305,7 +307,10 @@ void SomfyCover::set_tilt_target_(float target) {
 void SomfyCover::apply_rx_tilt_(RtsCommand command, uint8_t steps) {
   if (this->tilt_steps_ == 0)
     return;
-  steps = std::max<uint8_t>(steps, 1);
+  if (steps == 0) {
+    ESP_LOGW(TAG, "Ignoring RTS tilt frame with zero step magnitude");
+    return;
+  }
   const int direction = ((command == RtsCommand::StepUp) != this->tilt_inverted_) ? 1 : -1;
   this->tilt = clamp(this->tilt + direction * steps / static_cast<float>(this->tilt_steps_), 0.0f, 1.0f);
   ESP_LOGD(TAG, "RX tilt: %s, %u step(s) -> %.0f%%",

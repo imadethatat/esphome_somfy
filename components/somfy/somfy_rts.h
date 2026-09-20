@@ -109,7 +109,7 @@ protected:
   void build_step_frame(std::array<uint8_t, 10> &bytes, RtsCommand command, uint8_t steps, uint16_t code);
   void build_long_frame_(std::array<uint8_t, 10> &bytes, RtsCommand command, uint16_t code);
   void send_command(RtsCommand command);
-  void send_step_command_(RtsCommand command, uint8_t steps);
+  bool send_step_command_(RtsCommand command, uint8_t steps);
   void set_tilt_target_(float target);
   void apply_rx_tilt_(RtsCommand command, uint8_t steps);
   void open();

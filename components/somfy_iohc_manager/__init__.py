@@ -1,6 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import text_sensor
+from esphome.components.somfy import SomfyIohcHub
 from esphome.const import (
     CONF_CLOSE_DURATION,
     CONF_ID,
@@ -8,8 +9,6 @@ from esphome.const import (
 )
 from esphome.core import CORE
 from esphome.core.entity_helpers import register_device_class
-
-from esphome.components.somfy import SomfyIohcHub
 
 DEPENDENCIES = ["api", "esp32", "somfy"]
 AUTO_LOAD = ["cover", "text_sensor"]

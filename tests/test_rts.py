@@ -7,12 +7,15 @@ from somfy.cover import (
     CONF_DETECTED_REMOTE,
     CONF_ID,
     CONF_REMOTE_RECEIVER,
+    CONF_TILT_INVERTED,
+    CONF_TILT_STEPS,
     CONF_TYPE,
     DOMAIN,
     TYPE_RTS,
     find_hub_config,
     uses_rx,
     validate_rts_config,
+    validate_rts_tilt_config,
 )
 
 RX_HUB = {CONF_ID: "rts_radio", CONF_REMOTE_RECEIVER: "receiver_id"}
@@ -60,6 +63,27 @@ class TestUsesRx:
         original = dict(config)
         uses_rx(config)
         assert config == original
+
+
+class TestRtsTiltValidation:
+    """Exercise the cross-field rule; numeric bounds are owned by ESPHome's
+    int_range validator and compiled in the dedicated Venetian fixture."""
+
+    def test_tilt_steps_accepts_normal_configuration(self):
+        config = {CONF_TILT_STEPS: 12, CONF_TILT_INVERTED: False}
+        assert validate_rts_tilt_config(config) is config
+
+    def test_inversion_accepts_configured_steps(self):
+        config = {CONF_TILT_STEPS: 1, CONF_TILT_INVERTED: True}
+        assert validate_rts_tilt_config(config) is config
+
+    def test_inversion_requires_steps(self):
+        with pytest.raises(cv.Invalid, match=CONF_TILT_STEPS):
+            validate_rts_tilt_config({CONF_TILT_INVERTED: True})
+
+    def test_default_false_does_not_require_steps(self):
+        config = {CONF_TILT_INVERTED: False}
+        assert validate_rts_tilt_config(config) is config
 
 
 # ---------------------------------------------------------------------------

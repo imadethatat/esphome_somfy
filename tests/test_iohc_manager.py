@@ -3,8 +3,8 @@
 import importlib.util
 from pathlib import Path
 
-import pytest
 import esphome.config_validation as cv
+import pytest
 
 
 def _load_manager_module():

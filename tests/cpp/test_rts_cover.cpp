@@ -95,6 +95,7 @@ constexpr uint32_t TRAVEL_MS = 10000;
 /// Exposes the protected surface the tests need to drive and observe.
 class TestCover : public somfy::SomfyCover {
  public:
+  using SomfyCover::build_long_frame_;
   using SomfyCover::close;
   using SomfyCover::control;
   using SomfyCover::on_rts_frame_;
@@ -443,6 +444,70 @@ static void test_ha_tilt_control() {
   check(rig.detected.last_state.find("STEP_UP") != std::string::npos, "HA tilt TX round-trips as STEP_UP");
 }
 
+static void test_tilt_tx_failure_does_not_publish_false_state() {
+  printf("Tilt TX failure\n");
+  Rig rig(true, 10);
+  rig.cover.tilt = 0.2f;
+  g_rolling_code = 0;  // The production storage uses zero as its failure sentinel.
+  cover::CoverCall call;
+  call.set_tilt(0.7f);
+  rig.cover.control(call);
+  check(rig.tx.transmit_count == 0, "failed rolling-code allocation sends no frame");
+  check_close(rig.cover.tilt, 0.2f, 0.001f, "failed TX leaves the reported tilt unchanged");
+}
+
+static void test_zero_step_rx_is_ignored() {
+  printf("Invalid zero-magnitude tilt RX\n");
+  Rig rig(true, 10);
+  rig.cover.tilt = 0.5f;
+  const int publishes_before = rig.cover.publish_count;
+  rig.receive(REMOTE_CODE, somfy::RtsCommand::StepUp, 0);
+  check_close(rig.cover.tilt, 0.5f, 0.001f, "zero magnitude does not move the tilt estimate");
+  check(rig.cover.publish_count == publishes_before, "zero magnitude does not publish a false state");
+}
+
+static void test_venetian_tx_golden_vectors() {
+  printf("80-bit TX golden vectors\n");
+  Rig rig(true, 12);
+  struct Vector {
+    somfy::RtsCommand command;
+    std::array<uint8_t, 10> air;
+    const char *name;
+  } vectors[] = {
+      {somfy::RtsCommand::Up,   {{0xA7, 0x8E, 0x8E, 0x8F, 0x9D, 0xA9, 0xFF, 0xC4, 0x20, 0x0A}}, "UP"},
+      {somfy::RtsCommand::Down, {{0xA7, 0xE8, 0xE8, 0xE9, 0xFB, 0xCF, 0x99, 0xC4, 0x2C, 0x8E}}, "DOWN"},
+      {somfy::RtsCommand::My,   {{0xA7, 0xBD, 0xBD, 0xBC, 0xAE, 0x9A, 0xCC, 0xC4, 0x00, 0x19}}, "MY"},
+  };
+  for (const auto &vector : vectors) {
+    std::array<uint8_t, 10> actual{};
+    rig.cover.build_long_frame_(actual, vector.command, 1);
+    check(actual == vector.air, vector.name);
+  }
+
+  // Repeat extension ordinals are part of the 80-bit wire format. Verify the
+  // raw Manchester payloads rather than decoding them with our own receiver.
+  const std::array<uint8_t, 10> first_repeat{{0xA7, 0x8E, 0x8E, 0x8F, 0x9D, 0xA9, 0xFF, 0xC8, 0x20, 0x06}};
+  const std::array<uint8_t, 10> second_repeat{{0xA7, 0x8E, 0x8E, 0x8F, 0x9D, 0xA9, 0xFF, 0xCC, 0x20, 0x02}};
+  auto manchester = [](const std::array<uint8_t, 10> &bytes) {
+    remote_base::RawTimings data;
+    for (uint8_t bit = 0; bit < 80; bit++) {
+      const bool one = ((bytes[bit / 8] >> (7 - bit % 8)) & 1) != 0;
+      data.push_back(one ? -640 : 640);
+      data.push_back(one ? 640 : -640);
+    }
+    return data;
+  };
+  rig.hub.send_frame(vectors[0].air, 2, true);
+  const auto &raw = rig.tx.last_data.get_data();
+  const auto repeat1 = manchester(first_repeat);
+  const auto repeat2 = manchester(second_repeat);
+  // First long frame: 26 sync entries + 160 data + gap. Repeat sync is 14 entries.
+  check(std::equal(repeat1.begin(), repeat1.end(), raw.begin() + 201),
+        "first repeat carries the C8 extension and independent checksum");
+  check(std::equal(repeat2.begin(), repeat2.end(), raw.begin() + 376),
+        "second repeat carries the CC extension and independent checksum");
+}
+
 static void test_venetian_lift_uses_80_bit_frames() {
   printf("Venetian lift TX framing\n");
   Rig roller;
@@ -547,6 +612,12 @@ int main() {
   test_captured_telis_mod_var_frames();
   printf("\n");
   test_ha_tilt_control();
+  printf("\n");
+  test_tilt_tx_failure_does_not_publish_false_state();
+  printf("\n");
+  test_zero_step_rx_is_ignored();
+  printf("\n");
+  test_venetian_tx_golden_vectors();
   printf("\n");
   test_venetian_lift_uses_80_bit_frames();
   printf("\n");
