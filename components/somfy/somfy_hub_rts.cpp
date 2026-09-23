@@ -164,8 +164,9 @@ bool SomfyRtsHub::decode_frame_(const remote_base::RawTimings &data, RtsDecodedF
   }
 
   if (n < 20) {
-    if (debug_log)
+    if (debug_log) {
       ESP_LOGD(TAG, "decode_frame_ RETURN FAIL_SHORT n=%d", n);
+    }
     return false;
   }
 
