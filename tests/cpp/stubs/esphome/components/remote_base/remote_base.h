@@ -32,5 +32,14 @@ class RemoteReceiverListener {
   virtual bool on_receive(RemoteReceiveData data) = 0;
 };
 
+class RemoteReceiverBase {
+ public:
+  virtual ~RemoteReceiverBase() = default;
+  void register_listener(RemoteReceiverListener *listener) { this->listeners.push_back(listener); }
+
+  // Public here, protected in real ESPHome, so the suites can assert on it.
+  std::vector<RemoteReceiverListener *> listeners;
+};
+
 }  // namespace remote_base
 }  // namespace esphome

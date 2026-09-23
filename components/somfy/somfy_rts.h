@@ -19,13 +19,11 @@
 #include <vector>
 #include <algorithm>
 
-#ifdef USE_SOMFY_COVER_RX
 namespace esphome {
 namespace text_sensor {
 class TextSensor;
 }
 }  // namespace esphome
-#endif
 
 namespace esphome {
 namespace somfy {
@@ -50,14 +48,12 @@ public:
 
   void set_hub(SomfyRtsHub *hub) { this->hub_ = hub; }
 
-#ifdef USE_SOMFY_COVER_RX
   void add_receive_remote_code(uint32_t code) {
     auto it = std::lower_bound(this->receive_remote_codes_.begin(), this->receive_remote_codes_.end(), code);
     if (it == this->receive_remote_codes_.end() || *it != code)
       this->receive_remote_codes_.insert(it, code);
   }
   void set_log_text_sensor(text_sensor::TextSensor *ts) { this->log_text_sensor_ = ts; }
-#endif
   void set_prog_button(button::Button *btn) { this->cover_prog_button_ = btn; }
   void set_remote_code(uint32_t code) { this->remote_code_ = code; }
   void set_storage_namespace(const char *ns) { this->storage_namespace_ = ns; }
@@ -85,7 +81,6 @@ protected:
   std::unique_ptr<NVSRollingCodeStorage> storage_;
 
   // RX state (for keeping HA in sync with physical remotes)
-#ifdef USE_SOMFY_COVER_RX
   std::vector<uint32_t> receive_remote_codes_;
   text_sensor::TextSensor *log_text_sensor_{nullptr};
 
@@ -97,7 +92,6 @@ protected:
   bool is_allowed_remote_(uint32_t code) const;
   void start_rx_sync_(cover::CoverOperation op);
   void stop_rx_sync_();
-#endif
 
   // TX
   void log_and_send_(const char *label, RtsCommand cmd);

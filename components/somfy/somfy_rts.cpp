@@ -3,10 +3,8 @@
 #ifdef USE_SOMFY_RTS
 
 #include "esphome/core/log.h"
-#ifdef USE_SOMFY_COVER_RX
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/hal.h"
-#endif
 #include <cinttypes>
 
 namespace esphome {
@@ -17,8 +15,6 @@ static const char *TAG = "somfy.rts";
 // ---------------------------------------------------------------------------
 // RX callback from hub
 // ---------------------------------------------------------------------------
-
-#ifdef USE_SOMFY_COVER_RX
 
 void SomfyCover::on_rts_frame_(const RtsDecodedFrame &frame) {
   // Publish to the discovery text sensor regardless of the allow-list, so an
@@ -73,8 +69,6 @@ bool SomfyCover::is_allowed_remote_(uint32_t code) const {
          std::binary_search(this->receive_remote_codes_.begin(), this->receive_remote_codes_.end(), code);
 }
 
-#endif  // USE_SOMFY_COVER_RX
-
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
@@ -83,12 +77,10 @@ void SomfyCover::setup() {
   this->storage_ = std::make_unique<NVSRollingCodeStorage>(
       this->storage_namespace_, this->storage_key_, this->initial_rolling_code_);
 
-#ifdef USE_SOMFY_COVER_RX
   // Register RX callback on hub (if hub has a receiver)
   this->hub_->register_rx_callback([this](const RtsDecodedFrame &frame) {
     this->on_rts_frame_(frame);
   });
-#endif
 
   // Wire up time-based cover triggers
   automationTriggerUp_ = std::make_unique<Automation<>>(this->get_open_trigger());
@@ -116,7 +108,6 @@ void SomfyCover::setup() {
 // ---------------------------------------------------------------------------
 
 void SomfyCover::loop() {
-#ifdef USE_SOMFY_COVER_RX
   if (this->rx_sync_.active()) {
     const uint32_t full_duration_ms = this->rx_sync_.opening() ? this->open_duration_ : this->close_duration_;
     const RxSyncUpdate update = this->rx_sync_.update(millis(), full_duration_ms);
@@ -129,7 +120,6 @@ void SomfyCover::loop() {
     }
     return;
   }
-#endif  // USE_SOMFY_COVER_RX
 
   SomfyTimeBasedCover::loop();
 }
@@ -143,7 +133,6 @@ cover::CoverTraits SomfyCover::get_traits() {
 }
 
 void SomfyCover::control(const cover::CoverCall &call) {
-#ifdef USE_SOMFY_COVER_RX
   // A command from Home Assistant supersedes a physical-remote animation. The
   // animator owns current_operation while it runs, so hand a clean IDLE state to
   // the base machine rather than letting it resume from a stale travel clock.
@@ -151,7 +140,6 @@ void SomfyCover::control(const cover::CoverCall &call) {
     this->rx_sync_.stop();
     this->current_operation = cover::COVER_OPERATION_IDLE;
   }
-#endif
 
   SomfyTimeBasedCover::control(call);
 }

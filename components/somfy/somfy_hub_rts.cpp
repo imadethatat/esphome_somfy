@@ -3,10 +3,10 @@
 #ifdef USE_SOMFY_RTS
 
 #include "esphome/core/log.h"
-#ifdef USE_SOMFY_COVER_RX
-#include "esphome/components/logger/logger.h"
 #include "esphome/core/hal.h"
 #include <cinttypes>
+#ifdef USE_LOGGER
+#include "esphome/components/logger/logger.h"
 #endif
 
 namespace esphome {
@@ -14,7 +14,6 @@ namespace somfy {
 
 static const char *TAG = "somfy.rts.hub";
 
-#ifdef USE_SOMFY_COVER_RX
 namespace {
 // A press makes the remote repeat the same frame for a few hundred ms. Any copy
 // carrying the rolling code we just dispatched within this window is a repeat;
@@ -22,7 +21,6 @@ namespace {
 // swallowed no matter how quickly it follows.
 constexpr uint32_t RX_BURST_WINDOW_MS = 1500;
 }  // namespace
-#endif
 
 // ---------------------------------------------------------------------------
 // Frame struct (internal to TX/RX encoding, not exposed in header)
@@ -42,12 +40,10 @@ struct RtsFrame {
 
 void SomfyRtsHub::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Somfy RTS hub...");
-#ifdef USE_SOMFY_COVER_RX
   if (this->remote_receiver_ != nullptr) {
     ESP_LOGD(TAG, "Registering RX listener on hub");
     this->remote_receiver_->register_listener(this);
   }
-#endif
 }
 
 void SomfyRtsHub::loop() {}
@@ -55,10 +51,8 @@ void SomfyRtsHub::loop() {}
 void SomfyRtsHub::dump_config() {
   ESP_LOGCONFIG(TAG, "Somfy RTS Hub:");
   ESP_LOGCONFIG(TAG, "  Transmitter: %s", this->remote_transmitter_ != nullptr ? "configured" : "MISSING");
-#ifdef USE_SOMFY_COVER_RX
   ESP_LOGCONFIG(TAG, "  Receiver: %s", this->remote_receiver_ != nullptr ? "configured" : "not configured");
   ESP_LOGCONFIG(TAG, "  RX callbacks: %u", this->rx_callbacks_.size());
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -146,8 +140,6 @@ void SomfyRtsHub::send_frame(const std::array<uint8_t, 7> &frame_bytes, uint8_t 
 // ---------------------------------------------------------------------------
 // RX: Decode + dispatch
 // ---------------------------------------------------------------------------
-
-#ifdef USE_SOMFY_COVER_RX
 
 const char *rts_command_name(RtsCommand cmd) {
   switch (cmd) {
@@ -416,8 +408,6 @@ bool SomfyRtsHub::on_receive(remote_base::RemoteReceiveData data) {
 
   return true;
 }
-
-#endif  // USE_SOMFY_COVER_RX
 
 }  // namespace somfy
 }  // namespace esphome
