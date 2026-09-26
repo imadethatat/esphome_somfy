@@ -17,7 +17,8 @@ Assistant.
 Both ordinary lift commands and wheel commands from this remote are 80-bit RTS
 frames. A Venetian cover therefore sends 80-bit UP, DOWN, MY, STEP_UP, and
 STEP_DOWN frames. Covers without `tilt_steps` continue to use the unchanged
-56-bit transmitter.
+56-bit transmitter. The PROG button retains the existing 56-bit pairing frame;
+no 80-bit PROG extension was captured from the Telis remote.
 
 ## Configuration
 
@@ -173,7 +174,12 @@ obfuscated.
 - One tilt target therefore consumes exactly one rolling code.
 - Venetian UP/DOWN/MY commands use the 80-bit repeat framing expected by the
   motor, including repeat extension bytes and their checksums.
+- PROG uses the existing 56-bit RTS pairing frame.
 - Ordinary covers without `tilt_steps` retain their original 56-bit behaviour.
+
+The captured wheel frames establish the one-step format. Host tests verify the
+encoded magnitude and checksum for multi-step TX; the motor's response to a
+multi-step command still needs to be checked on the target blind.
 
 ## On-device verification
 

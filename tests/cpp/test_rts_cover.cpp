@@ -100,6 +100,7 @@ class TestCover : public somfy::SomfyCover {
   using SomfyCover::control;
   using SomfyCover::on_rts_frame_;
   using SomfyCover::open;
+  using SomfyCover::program;
   using SomfyCover::rx_sync_;
   using SomfyCover::stop;
 
@@ -387,6 +388,8 @@ static std::array<uint8_t, 10> make_80_bit_frame(somfy::RtsCommand command, uint
 static void test_80_bit_decode_and_tilt() {
   printf("80-bit RX commands and Venetian tilt\n");
   Rig rig(true, 10);
+  // The test frames model a physical remote, not an echo of our virtual ID.
+  rig.cover.set_remote_code(FOREIGN_CODE);
   rig.cover.tilt = 0.5f;
 
   struct Vector { somfy::RtsCommand command; const char *name; } vectors[] = {
@@ -440,8 +443,16 @@ static void test_ha_tilt_control() {
   check(rig.tx.transmit_count == 1, "one 80-bit frame is sent for a multi-step tilt target");
   check(g_rolling_code == rolling_before + 1, "one rolling code is consumed per tilt target");
   check_close(rig.cover.tilt, 0.7f, 0.001f, "tilt estimate reaches the quantized HA target");
+  somfy::RtsDecodedFrame decoded{};
+  bool received = false;
+  rig.hub.register_rx_callback([&](const somfy::RtsDecodedFrame &frame) {
+    decoded = frame;
+    received = true;
+  });
   rig.hub.on_receive(remote_base::RemoteReceiveData(as_received(rig.tx.last_data.get_data())));
   check(rig.detected.last_state.find("STEP_UP") != std::string::npos, "HA tilt TX round-trips as STEP_UP");
+  check(received && decoded.step_size == 5, "multi-step TX carries the requested five-step magnitude");
+  check_close(rig.cover.tilt, 0.7f, 0.001f, "own RX echo does not count the tilt movement twice");
 }
 
 static void test_tilt_tx_failure_does_not_publish_false_state() {
@@ -459,6 +470,7 @@ static void test_tilt_tx_failure_does_not_publish_false_state() {
 static void test_zero_step_rx_is_ignored() {
   printf("Invalid zero-magnitude tilt RX\n");
   Rig rig(true, 10);
+  rig.cover.set_remote_code(FOREIGN_CODE);
   rig.cover.tilt = 0.5f;
   const int publishes_before = rig.cover.publish_count;
   rig.receive(REMOTE_CODE, somfy::RtsCommand::StepUp, 0);
@@ -526,6 +538,21 @@ static void test_venetian_lift_uses_80_bit_frames() {
   }
 }
 
+static void test_venetian_prog_uses_existing_pairing_frame() {
+  printf("Venetian PROG framing\n");
+  Rig roller;
+  roller.cover.program();
+  const auto short_size = roller.tx.last_data.get_data().size();
+
+  Rig blind(true, 12);
+  blind.cover.program();
+  check(blind.tx.last_data.get_data().size() == short_size,
+        "Venetian PROG keeps the existing 56-bit pairing frame");
+  blind.hub.on_receive(remote_base::RemoteReceiveData(as_received(blind.tx.last_data.get_data())));
+  check(blind.detected.last_state.find("PROG") != std::string::npos,
+        "Venetian PROG frame decodes with the original command");
+}
+
 /// A press makes the remote send the same frame several times, ~143 ms apart,
 /// and the receiver hands us each copy. Repeats must collapse, but the next
 /// press must be acted on immediately however fast it follows — a time-based
@@ -588,6 +615,28 @@ static void test_ha_command_cancels_remote_animation() {
   check_close(rig.cover.position, at_stop, 0.01f, "position no longer drifts to the end stop");
 }
 
+static void test_ha_tilt_preserves_remote_lift_animation() {
+  printf("HA tilt during physical-remote lift\n");
+  Rig rig(true, 10);
+  rig.cover.position = 0.0f;
+  rig.cover.tilt = 0.2f;
+  rig.receive(REMOTE_CODE, somfy::RtsCommand::Up);
+  rig.advance(2000);
+  const float before_tilt = rig.cover.position;
+
+  cover::CoverCall call;
+  call.set_tilt(0.7f);
+  rig.cover.control(call);
+  check(rig.cover.rx_active(), "tilt-only command leaves the remote lift animation running");
+  check(rig.cover.current_operation == cover::COVER_OPERATION_OPENING,
+        "tilt-only command preserves the opening state");
+  check_close(rig.cover.tilt, 0.7f, 0.001f, "tilt-only command updates tilt");
+
+  rig.advance(2000);
+  check(rig.cover.position > before_tilt + 0.1f,
+        "height estimate continues moving after the tilt command");
+}
+
 int main() {
   printf("Somfy RTS host tests\n\n");
 
@@ -621,9 +670,13 @@ int main() {
   printf("\n");
   test_venetian_lift_uses_80_bit_frames();
   printf("\n");
+  test_venetian_prog_uses_existing_pairing_frame();
+  printf("\n");
   test_repeat_burst_collapses_but_new_press_gets_through();
   printf("\n");
   test_ha_command_cancels_remote_animation();
+  printf("\n");
+  test_ha_tilt_preserves_remote_lift_animation();
 
   printf("\n%d/%d checks passed\n", g_passed, g_checks);
   return g_passed == g_checks ? 0 : 1;

@@ -28,6 +28,13 @@ void SomfyCover::on_rts_frame_(const RtsDecodedFrame &frame) {
     this->log_text_sensor_->publish_state(buf);
   }
 
+  // A nearby receiver can hear our own transmission. The HA tilt target was
+  // already applied after TX, so applying its echoed step frame would count
+  // the same movement twice, even when the allow-list is empty.
+  if ((frame.command == RtsCommand::StepUp || frame.command == RtsCommand::StepDown) &&
+      frame.remote_code == this->remote_code_)
+    return;
+
   if (!this->is_allowed_remote_(frame.remote_code))
     return;
 
@@ -146,10 +153,10 @@ cover::CoverTraits SomfyCover::get_traits() {
 }
 
 void SomfyCover::control(const cover::CoverCall &call) {
-  // A command from Home Assistant supersedes a physical-remote animation. The
-  // animator owns current_operation while it runs, so hand a clean IDLE state to
-  // the base machine rather than letting it resume from a stale travel clock.
-  if (this->rx_sync_.active()) {
+  // Only a lift command supersedes a physical-remote lift animation. A tilt-only
+  // request leaves the motor travelling and must not freeze its height estimate.
+  if (this->rx_sync_.active() &&
+      (call.get_stop() || call.get_toggle().has_value() || call.get_position().has_value())) {
     this->rx_sync_.stop();
     this->current_operation = cover::COVER_OPERATION_IDLE;
   }
@@ -245,7 +252,11 @@ void SomfyCover::send_command(RtsCommand command) {
     ESP_LOGE(TAG, "TX aborted: rolling-code storage unavailable or exhausted");
     return;
   }
-  if (this->tilt_steps_ > 0) {
+  // Only UP, DOWN and MY have verified 80-bit extensions. Keep other commands,
+  // including PROG, on the existing 56-bit path instead of giving them MY's
+  // extension bytes.
+  if (this->tilt_steps_ > 0 &&
+      (command == RtsCommand::Up || command == RtsCommand::Down || command == RtsCommand::My)) {
     std::array<uint8_t, 10> frame;
     this->build_long_frame_(frame, command, rolling_code);
     ESP_LOGD(TAG, "80-bit lift TX: command=0x%X rolling=0x%04" PRIX16,
