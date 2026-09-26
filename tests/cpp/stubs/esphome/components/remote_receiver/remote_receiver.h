@@ -8,14 +8,7 @@
 namespace esphome {
 namespace remote_receiver {
 
-class RemoteReceiverComponent : public Component {
- public:
-  void register_listener(remote_base::RemoteReceiverListener *listener) {
-    this->listeners.push_back(listener);
-  }
-
-  std::vector<remote_base::RemoteReceiverListener *> listeners;
-};
+class RemoteReceiverComponent : public remote_base::RemoteReceiverBase, public Component {};
 
 }  // namespace remote_receiver
 }  // namespace esphome

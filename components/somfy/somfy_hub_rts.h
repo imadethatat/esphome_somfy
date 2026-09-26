@@ -6,15 +6,15 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/remote_transmitter/remote_transmitter.h"
+// remote_base rather than remote_receiver: RemoteReceiverBase is what carries
+// register_listener, and it is auto-loaded with the transmitter. ESPHome only
+// copies a component's sources into the build when the YAML uses it, so
+// including remote_receiver.h here would break configs that have no receiver.
+#include "esphome/components/remote_base/remote_base.h"
 #include <array>
 #include <cstdint>
 #include <functional>
 #include <vector>
-
-#ifdef USE_SOMFY_COVER_RX
-#include "esphome/components/remote_receiver/remote_receiver.h"
-#include "esphome/components/remote_base/remote_base.h"
-#endif
 
 namespace esphome {
 namespace somfy {
@@ -62,18 +62,12 @@ struct RtsTiming {
 // Callback type for RX frame notifications
 using RtsRxCallback = std::function<void(const RtsDecodedFrame &frame)>;
 
-#ifdef USE_SOMFY_COVER_RX
 // Human-readable name of an RTS command ("UP", "DOWN", ..., "UNKNOWN").
 const char *rts_command_name(RtsCommand cmd);
-#endif
 
 /// RTS radio hub — owns the remote_transmitter (and optionally remote_receiver).
 /// Devices register for RX callbacks and call send_frame() for TX.
-class SomfyRtsHub : public Component
-#ifdef USE_SOMFY_COVER_RX
-                  , public remote_base::RemoteReceiverListener
-#endif
-{
+class SomfyRtsHub : public Component, public remote_base::RemoteReceiverListener {
  public:
   void setup() override;
   void loop() override;
@@ -83,11 +77,7 @@ class SomfyRtsHub : public Component
   void set_remote_transmitter(remote_transmitter::RemoteTransmitterComponent *t) {
     this->remote_transmitter_ = t;
   }
-#ifdef USE_SOMFY_COVER_RX
-  void set_remote_receiver(remote_receiver::RemoteReceiverComponent *r) {
-    this->remote_receiver_ = r;
-  }
-#endif
+  void set_remote_receiver(remote_base::RemoteReceiverBase *r) { this->remote_receiver_ = r; }
 
   // TX: encode and transmit an RTS frame
   void send_frame(const std::array<uint8_t, 7> &frame_bytes, uint8_t repeat_count);
@@ -97,23 +87,14 @@ class SomfyRtsHub : public Component
   // RX: register a device to receive decoded frames
   // The callback is called for every successfully decoded frame.
   // Devices should filter by remote_code themselves.
-  void register_rx_callback(RtsRxCallback callback) {
-#ifdef USE_SOMFY_COVER_RX
-    this->rx_callbacks_.push_back(std::move(callback));
-#else
-    (void) callback;
-#endif
-  }
+  void register_rx_callback(RtsRxCallback callback) { this->rx_callbacks_.push_back(std::move(callback)); }
 
-#ifdef USE_SOMFY_COVER_RX
   bool on_receive(remote_base::RemoteReceiveData data) override;
-#endif
 
  protected:
   remote_transmitter::RemoteTransmitterComponent *remote_transmitter_{nullptr};
 
-#ifdef USE_SOMFY_COVER_RX
-  remote_receiver::RemoteReceiverComponent *remote_receiver_{nullptr};
+  remote_base::RemoteReceiverBase *remote_receiver_{nullptr};
   std::vector<RtsRxCallback> rx_callbacks_;
 
   // Last frame accepted, used to collapse a remote's repeat burst.
@@ -125,8 +106,6 @@ class SomfyRtsHub : public Component
   bool decode_frame_(const remote_base::RawTimings &data, RtsDecodedFrame &decoded, bool debug_log = false);
   // True when this frame is another copy of the press we already dispatched.
   bool rx_is_duplicate_(uint32_t remote_code, uint16_t rolling_code);
-#endif
-
 };
 
 }  // namespace somfy

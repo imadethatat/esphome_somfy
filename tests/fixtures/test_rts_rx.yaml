@@ -5,7 +5,12 @@ esphome:
 esp32:
   board: esp32dev
 
+# INFO, not the default DEBUG, so ESP_LOGD compiles away here. That is what the
+# real devices build, and it is the only way this fixture sees the warnings the
+# stripped-out log statements cause (e.g. -Wempty-body). test_rts_tx_only keeps
+# the default level so both paths stay covered.
 logger:
+  level: INFO
 
 external_components:
   - source:

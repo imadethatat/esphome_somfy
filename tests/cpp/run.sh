@@ -57,7 +57,7 @@ run_suite "RX-sync animator" "$TMP/rx_sync_animator" \
 
 run_suite "RTS cover" "$TMP/rts_cover" \
   -I stubs "${COMPONENT_WARNINGS[@]}" \
-  -DUSE_SOMFY_RTS -DUSE_SOMFY_COVER_RX \
+  -DUSE_SOMFY_RTS \
   test_rts_cover.cpp \
   ../../components/somfy/somfy_rts.cpp \
   ../../components/somfy/somfy_hub_rts.cpp \
